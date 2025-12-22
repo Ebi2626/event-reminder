@@ -26,6 +26,7 @@ class Cron
     {
         add_action('init', [$this, 'schedule_cron']);
         add_action(self::HOOK_SEND_REMINDERS, [$this, 'send_reminders']);
+        add_action('wp_ajax_event_reminder_manual_send', [$this, 'handle_manual_send']);
         add_filter('cron_schedules', [$this, 'add_daily_schedule']);
     }
 
@@ -191,5 +192,81 @@ class Cron
                 error_log("EventReminder: E-mail wysłany do {$email} dla wydarzenia {$event->ID}");
             }
         }
+    }
+
+    public function handle_manual_send()
+    {
+        if (
+            ! isset($_POST['nonce']) ||
+            ! wp_verify_nonce($_POST['nonce'], 'event_reminder_manual_send')
+        ) {
+            wp_send_json_error(['message' => 'Invalid nonce']);
+        }
+
+        if (! current_user_can('edit_posts')) {
+            wp_send_json_error(['message' => 'No capability']);
+        }
+
+        $post_id = isset($_POST['post_id']) ? (int) $_POST['post_id'] : 0;
+        if (! $post_id || get_post_type($post_id) !== PostType::POST_TYPE) {
+            wp_send_json_error(['message' => 'Invalid post']);
+        }
+
+        $event = get_post($post_id);
+        if (! $event || $event->post_status !== 'publish') {
+            wp_send_json_error(['message' => 'Invalid event']);
+        }
+
+        $this->send_event_reminder_manual_force($event);
+
+        wp_send_json_success();
+    }
+
+
+
+    private function send_event_reminder_manual_force($event)
+    {
+        $emails = get_post_meta($event->ID, '_reminder_emails', true);
+        if (! is_array($emails) || empty($emails)) {
+            error_log('EventReminder manual force: brak emaili dla ' . $event->ID);
+            return;
+        }
+
+        $start_date = get_post_meta($event->ID, '_event_start_date', true);
+        if (empty($start_date)) {
+            error_log('EventReminder manual force: brak daty startu dla ' . $event->ID);
+            return;
+        }
+
+        // Zamień format "Y-m-d\TH:i" na "Y-m-d H:i" i policz timestamp
+        $start = str_replace('T', ' ', $start_date);
+        $event_ts = strtotime($start);
+
+        // Dzisiejsza data (bez godziny) w strefie WP
+        $today_ts = strtotime(wp_date('Y-m-d', current_time('timestamp')));
+
+        // Różnica w dniach (zaokrąglona w dół)
+        $diff_seconds = $event_ts - $today_ts;
+        $days = (int) floor($diff_seconds / DAY_IN_SECONDS);
+
+        // Zbuduj opis
+        if ($days > 0) {
+            $label = sprintf(
+                _n('%d dzień przed wydarzeniem', '%d dni przed wydarzeniem', $days, EVENT_REMINDER_TEXTDOMAIN),
+                $days
+            );
+        } elseif ($days === 0) {
+            $label = __('w dniu wydarzenia', EVENT_REMINDER_TEXTDOMAIN);
+        } else {
+            $label = sprintf(
+                _n('%d dzień po wydarzeniu', '%d dni po wydarzeniu', abs($days), EVENT_REMINDER_TEXTDOMAIN),
+                abs($days)
+            );
+        }
+
+        error_log("EventReminder manual force: {$label} (event {$event->ID})");
+
+        // Wysyłamy dokładnie jeden komplet maili z tym opisem
+        $this->send_reminder_email($event, $emails, $label . ' (wysłane ręcznie)');
     }
 }

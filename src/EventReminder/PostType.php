@@ -36,6 +36,7 @@ class PostType
         // Metaboksy
         add_action('add_meta_boxes_' . self::POST_TYPE, [$this, 'add_meta_boxes']);
         add_action('save_post_' . self::POST_TYPE, [$this, 'save_meta'], 10, 2);
+        add_action('add_meta_boxes_' . self::POST_TYPE, [$this, 'add_manual_send_metabox']);
     }
 
 
@@ -236,7 +237,12 @@ class PostType
     public function render_reminders_meta_box($post)
     {
         $reminders_enabled = get_post_meta($post->ID, '_reminders_enabled', true);
-        $reminder_emails = get_post_meta($post->ID, '_reminder_emails', true) ?: '';
+        $reminder_emails   = get_post_meta($post->ID, '_reminder_emails', true);
+
+        if (is_array($reminder_emails)) {
+            $reminder_emails = implode("\n", $reminder_emails);
+        }
+
     ?>
         <p>
             <label>
@@ -252,10 +258,13 @@ class PostType
             <textarea name="reminder_emails"
                 rows="4"
                 class="large-text"><?php echo esc_textarea($reminder_emails); ?></textarea>
-        <p class="description"><?php _e('Powiadomienia: miesiąc, 2 tyg, tydzień, 3 dni, 1 dzień przed', EVENT_REMINDER_TEXTDOMAIN); ?></p>
+        <p class="description">
+            <?php _e('Powiadomienia: miesiąc, 2 tygodnie, tydzień, 3 dni i 1 dzień przed wydarzeniem.', EVENT_REMINDER_TEXTDOMAIN); ?>
         </p>
-<?php
+        </p>
+    <?php
     }
+
 
     public function save_meta($post_id, $post)
     {
@@ -291,5 +300,64 @@ class PostType
             $emails = array_filter(array_map('sanitize_email', explode("\n", $_POST['reminder_emails'])));
             update_post_meta($post_id, '_reminder_emails', $emails);
         }
+    }
+
+    public function add_manual_send_metabox()
+    {
+        add_meta_box(
+            'event_manual_reminder',
+            __('Ręczne wysłanie przypomnienia', EVENT_REMINDER_TEXTDOMAIN),
+            [$this, 'render_manual_send_metabox'],
+            self::POST_TYPE,
+            'side',
+            'low'
+        );
+    }
+
+    public function render_manual_send_metabox($post)
+    {
+        wp_nonce_field('event_reminder_manual_send', 'event_reminder_manual_send_nonce');
+    ?>
+        <p>
+            <button type="button"
+                class="button button-primary button-large"
+                id="event-reminder-manual-send"
+                data-post-id="<?php echo esc_attr($post->ID); ?>">
+                <?php _e('Wyślij przypomnienie teraz', EVENT_REMINDER_TEXTDOMAIN); ?>
+            </button>
+        </p>
+        <p id="event-reminder-manual-send-status" style="display:none;"></p>
+        <script>
+            jQuery(function($) {
+                $('#event-reminder-manual-send').on('click', function(e) {
+                    e.preventDefault();
+                    var $btn = $(this);
+                    var postId = $btn.data('post-id');
+                    var nonce  = $('#event_reminder_manual_send_nonce').val();
+                    var $msg = $('#event-reminder-manual-send-status');
+
+                    $btn.prop('disabled', true);
+                    $msg.text('<?php echo esc_js(__('Wysyłanie...', EVENT_REMINDER_TEXTDOMAIN)); ?>')
+                        .show();
+
+                    $.post(ajaxurl, {
+                        action: 'event_reminder_manual_send',
+                        nonce: nonce,
+                        post_id: postId
+                    }).done(function(resp) {
+                        if (resp && resp.success) {
+                            $msg.text('<?php echo esc_js(__('Przypomnienia wysłane.', EVENT_REMINDER_TEXTDOMAIN)); ?>');
+                        } else {
+                            $msg.text('<?php echo esc_js(__('Błąd podczas wysyłania przypomnień.', EVENT_REMINDER_TEXTDOMAIN)); ?>');
+                        }
+                    }).fail(function() {
+                        $msg.text('<?php echo esc_js(__('Błąd połączenia z serwerem.', EVENT_REMINDER_TEXTDOMAIN)); ?>');
+                    }).always(function() {
+                        $btn.prop('disabled', false);
+                    });
+                });
+            });
+        </script>
+<?php
     }
 }
