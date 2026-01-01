@@ -26,14 +26,15 @@ class PostType
     {
         add_action('init', [$this, 'register_post_type']);
         add_action('init', [$this, 'register_taxonomy']);
+        add_action('admin_enqueue_scripts', [$this, 'admin_assets']);
         add_filter('post_updated_messages', [$this, 'update_messages']);
 
-        // POPRAWIONE HOOKI KOLUMN - TYLKO dla naszego CPT
+        // Column hooks for CPT
         add_filter('manage_' . self::POST_TYPE . '_posts_columns', [$this, 'custom_columns']);
         add_action('manage_' . self::POST_TYPE . '_posts_custom_column', [$this, 'render_columns'], 10, 2);
         add_action('manage_' . self::POST_TYPE . '_posts_custom_column', [$this, 'render_status_column'], 10, 2);
 
-        // Metaboksy
+        // Metaboxes
         add_action('add_meta_boxes_' . self::POST_TYPE, [$this, 'add_meta_boxes']);
         add_action('save_post_' . self::POST_TYPE, [$this, 'save_meta'], 10, 2);
         add_action('add_meta_boxes_' . self::POST_TYPE, [$this, 'add_manual_send_metabox']);
@@ -60,19 +61,21 @@ class PostType
 
         $args = [
             'labels'             => $labels,
-            'public'             => true,
-            'publicly_queryable' => true,
+            'public'             => false,
+            'publicly_queryable' => false,
+            'exclude_from_search' => true,
             'show_ui'            => true,
             'show_in_menu'       => true,
-            'query_var'          => true,
-            'rewrite'            => ['slug' => 'wydarzenie'],
+            'show_in_admin_bar'  => true,
+            'query_var'          => false,
+            'rewrite'            => false,
             'capability_type'    => 'post',
-            'has_archive'        => true,
+            'has_archive'        => false,
             'hierarchical'       => false,
             'menu_position'      => 25,
             'menu_icon'          => 'dashicons-calendar-alt',
-            'show_in_rest'       => true,
-            'supports'           => ['title', 'editor', 'thumbnail'],
+            'show_in_rest'       => false,
+            'supports'           => ['title', 'editor'],
             'show_in_graphql'    => false,
         ];
 
@@ -103,7 +106,7 @@ class PostType
             'show_in_rest'      => true,
         ]);
 
-        // Domyślne statusy
+        // Statuses
         wp_insert_term('Planowane', self::TAXONOMY_STATUS);
         wp_insert_term('Aktywne', self::TAXONOMY_STATUS);
         wp_insert_term('Zakończone', self::TAXONOMY_STATUS);
@@ -148,16 +151,14 @@ class PostType
     {
         switch ($column) {
             case 'event_date':
-                $start_date = get_post_meta($post_id, '_event_start_date', true);
-                $end_date = get_post_meta($post_id, '_event_end_date', true);
-
-                if ($start_date) {
-                    echo date_i18n('d.m.Y H:i', strtotime($start_date));
-                    if ($end_date && $end_date !== $start_date) {
-                        echo '<br><small>→ ' . date_i18n('d.m.Y H:i', strtotime($end_date)) . '</small>';
-                    }
+                $is_recurring = get_post_meta($post_id, '_event_recurring', true);
+                if ($is_recurring === '1') {
+                    $month_day = get_post_meta($post_id, '_event_month_day', true);
+                    echo '<strong>♲ ' . date_i18n('d.m', strtotime($month_day . '-2026')) . '</strong>';
+                    echo '<br><small>co roku</small>';
                 } else {
-                    echo '<em>brak daty</em>';
+                    $start_date = get_post_meta($post_id, '_event_start_date', true);
+                    echo $start_date ? '<strong>' . date_i18n('d.m.Y', strtotime(str_replace('T', ' ', $start_date))) . '</strong>' : '<em>brak daty</em>';
                 }
                 break;
         }
@@ -203,36 +204,127 @@ class PostType
     {
         wp_nonce_field('event_reminder_meta', 'event_reminder_nonce');
 
+        $is_recurring = get_post_meta($post->ID, '_event_recurring', true);
         $start_date = get_post_meta($post->ID, '_event_start_date', true);
-        $end_date = get_post_meta($post->ID, '_event_end_date', true);
+        $month_day = get_post_meta($post->ID, '_event_month_day', true);
+
+        $show_recurring = $is_recurring === '1';
 ?>
-        <table class="form-table">
-            <tr>
-                <th><label for="event_start_date"><?php _e('Data rozpoczęcia', EVENT_REMINDER_TEXTDOMAIN); ?></label></th>
-                <td>
-                    <input type="datetime-local"
+
+        <div class="event-date-fields">
+            <p>
+                <label>
+                    <input type="checkbox"
+                        name="event_recurring"
+                        id="event-recurring-checkbox"
+                        value="1"
+                        <?php checked($is_recurring, '1'); ?> />
+                    <?php _e('Wydarzenie cykliczne (powtarzane co roku)', EVENT_REMINDER_TEXTDOMAIN); ?>
+                </label>
+            </p>
+
+            <!-- JEDNORAZOWE -->
+            <div id="event-date-single" style="display: <?php echo $show_recurring ? 'none' : 'block'; ?>;">
+                <p>
+                    <label for="event_start_date"><?php _e('Data wydarzenia', EVENT_REMINDER_TEXTDOMAIN); ?></label><br>
+                    <input type="date"
                         id="event_start_date"
                         name="event_start_date"
                         value="<?php echo esc_attr($start_date); ?>"
-                        class="regular-text"
-                        required />
-                    <p class="description"><?php _e('RRRR-MM-DDTHH:MM (np. 2026-01-15T10:00)', EVENT_REMINDER_TEXTDOMAIN); ?></p>
-                </td>
-            </tr>
-            <tr>
-                <th><label for="event_end_date"><?php _e('Data zakończenia', EVENT_REMINDER_TEXTDOMAIN); ?></label></th>
-                <td>
-                    <input type="datetime-local"
-                        id="event_end_date"
-                        name="event_end_date"
-                        value="<?php echo esc_attr($end_date); ?>"
                         class="regular-text" />
-                    <p class="description"><?php _e('Opcjonalne dla wydarzeń jednodniowych', EVENT_REMINDER_TEXTDOMAIN); ?></p>
-                </td>
-            </tr>
-        </table>
+
+                    <br><small><?php _e('RRRR-MM-DD', EVENT_REMINDER_TEXTDOMAIN); ?></small>
+                </p>
+            </div>
+
+            <!-- CYKLICZNE -->
+            <div id="event-date-recurring" style="display: <?php echo $show_recurring ? 'block' : 'none'; ?>;">
+                <p>
+                    <label><?php _e('Miesiąc i dzień (co roku)', EVENT_REMINDER_TEXTDOMAIN); ?></label><br>
+                    <select id="event_month" name="event_month">
+                        <option value=""><?php _e('Miesiąc', EVENT_REMINDER_TEXTDOMAIN); ?></option>
+                        <?php
+                        for ($m = 1; $m <= 12; $m++) {
+                            $month_val = sprintf('%02d', $m);
+                            $selected = ($month_day && substr($month_day, 0, 2) === $month_val) ? ' selected' : '';
+                            printf('<option value="%s"%s>%s</option>', $month_val, $selected, date_i18n('F', mktime(0, 0, 0, $m, 1)));
+                        }
+                        ?>
+                    </select>
+
+                    <select id="event_day" name="event_day">
+                        <option value=""><?php _e('Dzień', EVENT_REMINDER_TEXTDOMAIN); ?></option>
+                        <?php
+                        for ($d = 1; $d <= 31; $d++) {
+                            $day_val = sprintf('%02d', $d);
+                            $selected = ($month_day && substr($month_day, -2) === $day_val) ? ' selected' : '';
+                            printf('<option value="%s"%s>%d</option>', $day_val, $selected, $d);
+                        }
+                        ?>
+                    </select>
+                    <input type="hidden" name="event_month_day" id="event_month_day" value="<?php echo esc_attr($month_day ?? ''); ?>" />
+                    <br><small><?php _e('Powtarzane co roku w tym samym dniu.', EVENT_REMINDER_TEXTDOMAIN); ?></small>
+                </p>
+            </div>
+        </div>
+        <script>
+            (function($) {
+                $(function() {
+                    var $checkbox = $('#event-recurring-checkbox');
+                    var $single = $('#event-date-single');
+                    var $recurring = $('#event-date-recurring');
+
+                    function toggleFields() {
+                        var isRecurring = $checkbox.is(':checked');
+
+                        $single.toggle(!isRecurring);
+                        $recurring.toggle(isRecurring);
+
+                        // Dynamiczne required – usuwa błąd focus
+                        $('#event_start_date').prop('required', !isRecurring);
+                        $('#event_month, #event_day').prop('required', isRecurring);
+                    }
+
+                    function updateDaysOptions() {
+                        var month = parseInt($('#event_month').val()) || 0;
+                        var currentValue = $('#event_day').val();
+
+                        $('#event_day').empty().append('<option value=""><?php _e("Dzień", EVENT_REMINDER_TEXTDOMAIN); ?></option>');
+
+                        var maxDays = 31; // max dla lutego (przestępny rok)
+                        for (var d = 1; d <= maxDays; d++) {
+                            var dayVal = d.toString().padStart(2, '0');
+                            var selected = (dayVal === currentValue) ? ' selected' : '';
+                            $('#event_day').append('<option value="' + dayVal + '"' + selected + '>' + d + '</option>');
+                        }
+
+                        updateHiddenField();
+                    }
+
+                    function updateHiddenField() {
+                        var month = $('#event_month').val();
+                        var day = $('#event_day').val();
+                        $('#event_month_day').val(month && day ? month + '-' + day : '');
+                    }
+
+                    // Inicjalizacja
+                    toggleFields();
+                    if ($('#event_month').val()) {
+                        updateDaysOptions();
+                    }
+
+                    // Listeners
+                    $checkbox.on('change', toggleFields);
+                    $('#event_month').on('change', updateDaysOptions);
+                    $('#event_day').on('change', updateHiddenField);
+                });
+            })(jQuery);
+        </script>
+
     <?php
     }
+
+
 
     public function render_reminders_meta_box($post)
     {
@@ -253,15 +345,17 @@ class PostType
                 <?php _e('Wysyłaj automatyczne przypomnienia', EVENT_REMINDER_TEXTDOMAIN); ?>
             </label>
         </p>
-        <p>
+        <div>
             <label><?php _e('Adresy e-mail (jeden na linię)', EVENT_REMINDER_TEXTDOMAIN); ?></label><br>
             <textarea name="reminder_emails"
                 rows="4"
                 class="large-text"><?php echo esc_textarea($reminder_emails); ?></textarea>
-        <p class="description">
-            <?php _e('Powiadomienia: miesiąc, 2 tygodnie, tydzień, 3 dni i 1 dzień przed wydarzeniem.', EVENT_REMINDER_TEXTDOMAIN); ?>
-        </p>
-        </p>
+            <p class="description">
+                <?php _e('Powiadomienia: miesiąc, 2 tygodnie, tydzień, 3 dni i 1 dzień przed wydarzeniem.', EVENT_REMINDER_TEXTDOMAIN); ?>
+                <?php _e('Powiadomienia będą zawierały pełną treść wydarzenia z edytora.', EVENT_REMINDER_TEXTDOMAIN); ?><br>
+                <?php _e('Pamiętaj o linkach, obrazkach i formatowaniu!', EVENT_REMINDER_TEXTDOMAIN); ?>
+            </p>
+        </div>
     <?php
     }
 
@@ -278,18 +372,45 @@ class PostType
             return;
         }
 
-        // Daty (zawsze sanitizuj)
-        if (isset($_POST['event_start_date'])) {
+        // Checkbox cykliczne
+        if (isset($_POST['event_recurring'])) {
+            update_post_meta($post_id, '_event_recurring', '1');
+        } else {
+            delete_post_meta($post_id, '_event_recurring');
+        }
+
+        // Jednorazowe daty
+        if (isset($_POST['event_start_date']) && ! empty($_POST['event_start_date'])) {
             $start_date = sanitize_text_field($_POST['event_start_date']);
             update_post_meta($post_id, '_event_start_date', $start_date);
             update_post_meta($post_id, '_event_date', $start_date); // Dla kolumny
+        } elseif (get_post_meta($post_id, '_event_recurring', true) !== '1') {
+            // Czyść, jeśli nie cykliczne
+            delete_post_meta($post_id, '_event_start_date');
+            delete_post_meta($post_id, '_event_date');
         }
 
         if (isset($_POST['event_end_date']) && ! empty($_POST['event_end_date'])) {
             update_post_meta($post_id, '_event_end_date', sanitize_text_field($_POST['event_end_date']));
         }
 
-        // Przypomnienia
+        // Cykliczne: MM-DD z selectów
+        $event_month = isset($_POST['event_month']) ? sanitize_text_field($_POST['event_month']) : '';
+        $event_day = isset($_POST['event_day']) ? sanitize_text_field($_POST['event_day']) : '';
+
+        if ($event_month && $event_day) {
+            $test_date = wp_date('Y-') . $event_month . '-' . $event_day;
+            if (strtotime($test_date) !== false) {
+                update_post_meta($post_id, '_event_month_day', $event_month . '-' . $event_day);
+                error_log("EventReminder: zapisano cykliczne {$event_month}-{$event_day} (test: {$test_date})");
+            } else {
+                error_log("EventReminder: ODRZUCONO niepoprawną datę {$event_month}-{$event_day}");
+            }
+        } elseif (get_post_meta($post_id, '_event_recurring', true) === '1') {
+            delete_post_meta($post_id, '_event_month_day');
+        }
+
+        // Przypomnienia (bez zmian)
         if (isset($_POST['reminders_enabled'])) {
             update_post_meta($post_id, '_reminders_enabled', '1');
         } else {
@@ -301,6 +422,7 @@ class PostType
             update_post_meta($post_id, '_reminder_emails', $emails);
         }
     }
+
 
     public function add_manual_send_metabox()
     {
@@ -333,7 +455,7 @@ class PostType
                     e.preventDefault();
                     var $btn = $(this);
                     var postId = $btn.data('post-id');
-                    var nonce  = $('#event_reminder_manual_send_nonce').val();
+                    var nonce = $('#event_reminder_manual_send_nonce').val();
                     var $msg = $('#event-reminder-manual-send-status');
 
                     $btn.prop('disabled', true);
@@ -359,5 +481,22 @@ class PostType
             });
         </script>
 <?php
+    }
+
+    public function admin_assets($hook)
+    {
+
+        if ($hook === 'post.php' || $hook === 'post-new.php') {
+            global $post;
+            if ($post && $post->post_type === self::POST_TYPE) {
+                wp_add_inline_style('wp-edit-post', '
+                .editor-styles-wrapper { 
+                    color: #000 !important; 
+                    background: #fff !important; 
+                }
+                .wp-block { color: #000 !important; }
+            ');
+            }
+        }
     }
 }

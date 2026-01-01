@@ -3,7 +3,7 @@
 /**
  * Plugin Name: Event Reminder
  * Plugin URI: ----
- * Description: System przypomnień o wydarzeniach z rejestracją, potwierdzeniem i cyklicznymi e-mailami (cron).
+ * Description: System przypomnień o wydarzeniach z cyklicznymi e-mailami (cron).
  * Version: 0.0.1
  * Requires at least: 6.0
  * Requires PHP: 8.0
@@ -18,7 +18,7 @@ if (! defined('ABSPATH')) {
     exit;
 }
 
-define('EVENT_REMINDER_VERSION', '1.0.0');
+define('EVENT_REMINDER_VERSION', '0.0.1');
 define('EVENT_REMINDER_PLUGIN_FILE', __FILE__);
 define('EVENT_REMINDER_PLUGIN_BASENAME', plugin_basename(__FILE__));
 define('EVENT_REMINDER_PLUGIN_URL', plugin_dir_url(__FILE__));

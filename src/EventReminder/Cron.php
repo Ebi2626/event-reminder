@@ -75,19 +75,9 @@ class Cron
                     'value'   => '1',
                     'compare' => '=',
                 ],
-                [
-                    'key'     => '_event_start_date',
-                    'value'   => date('Y-m-d H:i:s', strtotime('+30 days')),
-                    'compare' => '<=',
-                    'type'    => 'DATETIME',
-                ],
             ],
             'posts_per_page' => -1,
-            'orderby'        => 'meta_value',
-            'meta_key'       => '_event_start_date',
-            'order'          => 'ASC',
         ]);
-
         return $events;
     }
 
@@ -98,28 +88,39 @@ class Cron
             return;
         }
 
-        $start_date = get_post_meta($event->ID, '_event_start_date', true);
-        $intervals  = $this->calculate_reminder_intervals($start_date);
+        $intervals = $this->calculate_reminder_intervals();
 
         foreach ($intervals as $interval_key => $label) {
             $meta_key = '_reminder_sent_' . $interval_key;
 
-            // LOG – sprawdźmy, co jest w meta
             $already = get_post_meta($event->ID, $meta_key, true);
             error_log("EventReminder: {$meta_key} for event {$event->ID} = " . var_export($already, true));
 
             if ($already) {
-                continue; // JUŻ wysłane
+                continue;
             }
 
-            if ($this->is_time_for_reminder($start_date, $interval_key)) {
+            // PRZEŁĄCZNIK: cykliczne vs jednorazowe
+            $is_recurring = get_post_meta($event->ID, '_event_recurring', true) === '1';
+
+            if ($is_recurring) {
+                $date_for_calc = $this->get_recurring_date($event->ID);
+            } else {
+                $date_for_calc = get_post_meta($event->ID, '_event_start_date', true);
+            }
+
+            if (empty($date_for_calc)) {
+                error_log("EventReminder: brak daty dla event {$event->ID} (recurring={$is_recurring})");
+                continue;
+            }
+
+            if ($this->is_time_for_reminder($date_for_calc, $interval_key)) {
                 $this->send_reminder_email($event, $emails, $label);
                 update_post_meta($event->ID, $meta_key, current_time('mysql'));
                 error_log("EventReminder: set {$meta_key} for event {$event->ID}");
             }
         }
     }
-
 
 
     private function calculate_reminder_intervals()
@@ -133,16 +134,9 @@ class Cron
         ];
     }
 
-
-
-    private function is_time_for_reminder($start_date, $interval_key)
+    private function is_time_for_reminder($event, $interval_key)
     {
-        if (empty($start_date)) {
-            return false;
-        }
-
-        // $start_date przychodzi jako "Y-m-d\TH:i" – zamieniamy T na spację
-        $start = str_replace('T', ' ', $start_date);
+        $is_recurring = get_post_meta($event->ID, '_event_recurring', true) === '1';
 
         $map = [
             '30days' => '-30 days',
@@ -156,17 +150,29 @@ class Cron
             return false;
         }
 
-        // Timestamp wydarzenia w strefie WP
-        $event_ts = strtotime($start);
+        if ($is_recurring) {
+            $month_day = get_post_meta($event->ID, '_event_month_day', true);
+            if (empty($month_day)) {
+                return false;
+            }
 
-        // Dzień, w którym ma pójść przypomnienie
+            $event_date = wp_date('Y-') . $month_day . ' 00:00:00';
+        } else {
+            $start_date = get_post_meta($event->ID, '_event_start_date', true);
+            if (empty($start_date)) {
+                return false;
+            }
+
+            $event_date = str_replace('T', ' ', $start_date);
+        }
+
+        $event_ts = strtotime($event_date);
         $target_ts = strtotime($map[$interval_key], $event_ts);
 
-        // „Dzisiejsza” data wg WP (bez godziny)
         $today = wp_date('Y-m-d', current_time('timestamp'));
-
         return wp_date('Y-m-d', $target_ts) === $today;
     }
+
 
 
     private function send_reminder_email($event, $emails, $label)
@@ -177,12 +183,7 @@ class Cron
             $label
         );
 
-        $message = sprintf(
-            __('<h2>%s</h2><p><strong>Data:</strong> %s</p><p><a href="%s">Zobacz szczegóły</a></p>', EVENT_REMINDER_TEXTDOMAIN),
-            get_the_title($event->ID),
-            date_i18n('d.m.Y H:i', strtotime(get_post_meta($event->ID, '_event_start_date', true))),
-            get_permalink($event->ID)
-        );
+        $message = apply_filters('the_content', $event->post_content);
 
         $headers = ['Content-Type: text/html; charset=UTF-8'];
 
@@ -232,20 +233,25 @@ class Cron
             return;
         }
 
-        $start_date = get_post_meta($event->ID, '_event_start_date', true);
-        if (empty($start_date)) {
-            error_log('EventReminder manual force: brak daty startu dla ' . $event->ID);
+        // PRZEŁĄCZNIK: cykliczne vs jednorazowe
+        $is_recurring = get_post_meta($event->ID, '_event_recurring', true) === '1';
+
+        if ($is_recurring) {
+            $date_for_calc = $this->get_recurring_date($event->ID);
+        } else {
+            $date_for_calc = get_post_meta($event->ID, '_event_start_date', true);
+        }
+
+        if (empty($date_for_calc)) {
+            error_log('EventReminder manual force: brak daty dla ' . $event->ID . ' (recurring=' . $is_recurring . ')');
             return;
         }
 
-        // Zamień format "Y-m-d\TH:i" na "Y-m-d H:i" i policz timestamp
-        $start = str_replace('T', ' ', $start_date);
+        // Oblicz różnicę dni (jak było)
+        $start = str_replace('T', ' ', $date_for_calc);
         $event_ts = strtotime($start);
-
-        // Dzisiejsza data (bez godziny) w strefie WP
         $today_ts = strtotime(wp_date('Y-m-d', current_time('timestamp')));
 
-        // Różnica w dniach (zaokrąglona w dół)
         $diff_seconds = $event_ts - $today_ts;
         $days = (int) floor($diff_seconds / DAY_IN_SECONDS);
 
@@ -264,9 +270,20 @@ class Cron
             );
         }
 
-        error_log("EventReminder manual force: {$label} (event {$event->ID})");
+        error_log("EventReminder manual force: {$label} (event {$event->ID}, date: {$date_for_calc})");
 
-        // Wysyłamy dokładnie jeden komplet maili z tym opisem
         $this->send_reminder_email($event, $emails, $label . ' (wysłane ręcznie)');
+    }
+
+
+    private function get_recurring_date($post_id)
+    {
+        $month_day = get_post_meta($post_id, '_event_month_day', true);
+        if (empty($month_day)) {
+            return '';
+        }
+
+        // Bieżący rok + MM-DD z meta
+        return wp_date('Y-') . $month_day . ' 00:00:00';
     }
 }
