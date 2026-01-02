@@ -8,7 +8,6 @@ if (! defined('ABSPATH')) {
 
 class Cron
 {
-
     public const HOOK_SEND_REMINDERS = 'event_reminder_send_emails';
     public const SCHEDULE_DAILY = 'event_reminder_daily';
 
@@ -90,19 +89,17 @@ class Cron
 
         $intervals = $this->calculate_reminder_intervals();
 
+        $is_recurring = get_post_meta($event->ID, '_event_recurring', true) === '1';
+
         foreach ($intervals as $interval_key => $label) {
             $meta_key = '_reminder_sent_' . $interval_key;
 
             $already = get_post_meta($event->ID, $meta_key, true);
-            error_log("EventReminder: {$meta_key} for event {$event->ID} = " . var_export($already, true));
-
             if ($already) {
                 continue;
             }
 
             // PRZEŁĄCZNIK: cykliczne vs jednorazowe
-            $is_recurring = get_post_meta($event->ID, '_event_recurring', true) === '1';
-
             if ($is_recurring) {
                 $date_for_calc = $this->get_recurring_date($event->ID);
             } else {
@@ -110,14 +107,13 @@ class Cron
             }
 
             if (empty($date_for_calc)) {
-                error_log("EventReminder: brak daty dla event {$event->ID} (recurring={$is_recurring})");
                 continue;
             }
 
             if ($this->is_time_for_reminder($date_for_calc, $interval_key)) {
                 $this->send_reminder_email($event, $emails, $label);
                 update_post_meta($event->ID, $meta_key, current_time('mysql'));
-                error_log("EventReminder: set {$meta_key} for event {$event->ID}");
+                error_log("EventReminder: WYSLANO '{$label}' dla '{$event->post_title}' (ID:{$event->ID})");
             }
         }
     }
@@ -134,9 +130,29 @@ class Cron
         ];
     }
 
-    private function is_time_for_reminder($event, $interval_key)
+    private function is_time_for_reminder($event_or_date, $interval_key)
     {
-        $is_recurring = get_post_meta($event->ID, '_event_recurring', true) === '1';
+        // Sprawdź czy to obiekt WP_Post czy string daty
+        if (is_object($event_or_date) && isset($event_or_date->ID)) {
+            $event = $event_or_date;
+            $is_recurring = get_post_meta($event->ID, '_event_recurring', true) === '1';
+
+            if ($is_recurring) {
+                $month_day = get_post_meta($event->ID, '_event_month_day', true);
+                $event_date = wp_date('Y-') . $month_day . ' 00:00:00';
+            } else {
+                $start_date = get_post_meta($event->ID, '_event_start_date', true);
+                $event_date = str_replace('T', ' ', $start_date);
+            }
+        } elseif (is_string($event_or_date)) {
+            $event_date = str_replace('T', ' ', $event_or_date);
+        } else {
+            return false;
+        }
+
+        if (empty($event_date)) {
+            return false;
+        }
 
         $map = [
             '30days' => '-30 days',
@@ -150,28 +166,18 @@ class Cron
             return false;
         }
 
-        if ($is_recurring) {
-            $month_day = get_post_meta($event->ID, '_event_month_day', true);
-            if (empty($month_day)) {
-                return false;
-            }
-
-            $event_date = wp_date('Y-') . $month_day . ' 00:00:00';
-        } else {
-            $start_date = get_post_meta($event->ID, '_event_start_date', true);
-            if (empty($start_date)) {
-                return false;
-            }
-
-            $event_date = str_replace('T', ' ', $start_date);
-        }
-
         $event_ts = strtotime($event_date);
         $target_ts = strtotime($map[$interval_key], $event_ts);
+        $target_date = date('Y-m-d', $target_ts);
 
         $today = wp_date('Y-m-d', current_time('timestamp'));
-        return wp_date('Y-m-d', $target_ts) === $today;
+        $match = $target_date === $today;
+
+        error_log("    DEBUG: {$interval_key} target={$target_date} TODAY={$today} → " . ($match ? 'TAK' : 'NIE'));
+
+        return $match;
     }
+
 
 
 
@@ -283,7 +289,6 @@ class Cron
             return '';
         }
 
-        // Bieżący rok + MM-DD z meta
-        return wp_date('Y-') . $month_day . ' 00:00:00';
+        return wp_date('Y-') . $month_day . 'T00:00:00';
     }
 }
