@@ -6,13 +6,14 @@
  * Description: System przypomnień o wydarzeniach z cyklicznymi e-mailami (cron).
  * Version: 0.0.1
  * Requires at least: 6.0
+ * Tested up to: 6.6
  * Requires PHP: 8.0
  * Author: Edwin Harmata
+ * Author URI: https://edwinharmata.pl
  * License: GPL v2 or later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  * Text Domain: event-reminder
  */
-
 
 if (! defined('ABSPATH')) {
     exit;

@@ -31,10 +31,8 @@ class Cron
 
     public function schedule_cron()
     {
-        // Planuj tylko jeśli nie istnieje
         if (! wp_next_scheduled(self::HOOK_SEND_REMINDERS)) {
             wp_schedule_event(time(), self::SCHEDULE_DAILY, self::HOOK_SEND_REMINDERS);
-            error_log('EventReminder: Cron zaplanowany');
         }
     }
 
@@ -59,8 +57,6 @@ class Cron
         foreach ($events as $event) {
             $this->send_event_reminders($event);
         }
-
-        error_log('EventReminder: Wysyłka przypomnień zakończona (' . count($events) . ' wydarzeń)');
     }
 
     private function get_events_for_reminders()
@@ -173,8 +169,6 @@ class Cron
         $today = wp_date('Y-m-d', current_time('timestamp'));
         $match = $target_date === $today;
 
-        error_log("    DEBUG: {$interval_key} target={$target_date} TODAY={$today} → " . ($match ? 'TAK' : 'NIE'));
-
         return $match;
     }
 
@@ -196,7 +190,6 @@ class Cron
         foreach ($emails as $email) {
             if (is_email($email)) {
                 wp_mail($email, $subject, $message, $headers);
-                error_log("EventReminder: E-mail wysłany do {$email} dla wydarzenia {$event->ID}");
             }
         }
     }
